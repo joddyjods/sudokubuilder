@@ -1,0 +1,458 @@
+<HTML>
+
+    <style>
+        body {font-family: 'Courier New', Courier, monospace; font-size: large;  }
+        div.section {border-style: solid; border-color:black; border-width: 1px; width:fit-content; display: inline-block;}
+        div.outside {border-style: solid; border-color:black; border-width: 3px; width:fit-content; margin: auto; }
+        div.cell {
+            border-style: solid; border-color:darkslategray; border-width: 1px; width:fit-content;display: inline-block; 
+            width: 30px; height : 30px; text-align: center; line-height: 30px; color : black;}
+
+        div.fewOptionsCell {
+            border-style: solid; border-color:darkslategray; border-width: 1px; width:fit-content;display: inline-block; 
+            width: 30px; height : 30px; text-align: center; line-height: 30px; color : black; background-color: cornflowerblue;}
+
+        div.errorCell {
+            border-style: solid; border-color:darkslategray; border-width: 1px; width:fit-content;display: inline-block; 
+            width: 30px; height : 30px; text-align: center; line-height: 30px; color : black; background-color:palevioletred;}
+
+        div.userCell {
+            border-style: solid; border-color:darkslategray; border-width: 1px; width:fit-content;display: inline-block; 
+            width: 30px; height : 30px; text-align: center; line-height: 30px; color : blue; font-weight: bold;}
+
+        div.madeAGuessCell {
+            border-style: solid; border-color:darkslategray; border-width: 1px; width:fit-content;display: inline-block; 
+            width: 30px; height : 30px; text-align: center; line-height: 30px; color :purple; font-weight: bold; background-color: thistle;}
+
+        div.container {border-style:none; text-align: center; align-content: center;}
+
+        div.dialog {
+            border-style:none; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: medium; color: indigo;
+            padding-top: 30px;
+        }
+        
+    </style>
+
+    <head title='Sudoku'>
+        <script lang="JavaScript">
+            var cols=9;
+            var rows=9;
+            var sectioncols = Math.sqrt(cols);
+            var sectionrows = Math.sqrt(rows);
+            var thegame = [];
+            var decisionStack = [];
+            var sparseness = 0.4;
+
+            /**
+             * Passed the coordinates of the super cell - output the cols and rows inside
+             */
+            function getSection( xcell, ycell ) {
+                var section = document.createElement("div");
+                section.className = "section";
+
+                
+                for ( var j = 0; j < rows/sectionrows; ++j ) {
+                    for ( var i = 0; i < cols/sectioncols; ++i ) {
+                        var cellValue = thegame[ xcell*cols/sectioncols + ycell*rows*sectionrows + j*rows + i];
+                        var cell = document.createElement("div");
+                        if ( cellValue.userEntered ) {
+                            if ( cellValue.guessed == false ) {
+                                cell.className = "userCell";
+                            }
+                            else {
+                                cell.className = "madeAGuessCell";
+                            }
+                        }
+                        else {
+                            if ( cellValue.possibles.length == 1 ) {
+                                cell.className = "fewOptionsCell";
+                            }
+                            else {
+                                cell.className = "cell";
+                            }
+                        }
+                        
+                        if ( cellValue.value != 0 ) {
+                            cell.innerHTML = cellValue.value;
+                        }
+                        else {
+                            cell.innerHTML = "&nbsp;"; // "(" + cellValue.possibles.length + ")";
+                            if ( cellValue.possibles.length == 0 ) {
+                                cell.className = "errorCell";
+                            }
+                        }
+                    
+                        section.appendChild(cell);
+                        if ( i == sectioncols-1 )
+                        {
+                            section.appendChild( document.createElement("BR"));
+                        }
+                    }
+                }
+
+                return section;
+            }
+
+            function render() {
+                var gameboard = document.getElementById('gameboard');
+                if ( gameboard != null ) {
+                    while ( gameboard.children.length > 0 ) {
+                        gameboard.removeChild(gameboard.children[0]);
+                    }
+                }
+
+                
+                for ( var j = 0; j < rows/sectionrows; ++j ) {
+                    for ( var i = 0; i < cols/sectioncols; ++i ) {
+                        var thisSection = getSection( i, j );
+                        gameboard.appendChild( thisSection );
+                        if ( i == sectioncols-1 ) {
+                            gameboard.appendChild( document.createElement("BR"));
+                        }
+                    }
+                }
+                
+            }
+
+            function updateDialog( sometext ) {
+                document.getElementById( 'dialog' ).innerHTML = sometext;
+            }
+
+            function getSectionCoordinates( index ) {
+                var coords = [];
+                var rowcoord = Math.floor( index / rows );
+                var sectionrow = Math.floor( rowcoord / sectionrows );
+                var colcoord = Math.floor((index - (rowcoord*cols)) / sectioncols);
+
+                coords.push( colcoord );
+                coords.push( sectionrow );
+                return coords;
+            }
+
+            function removeCellValueFromPossible( cellValue, possibles ) {
+                if ( cellValue.value > 0 ) {
+                    var found = possibles.indexOf(cellValue.value);
+                    if (found > -1) {
+                        possibles.splice(found, 1);
+                    }
+                }
+            }
+
+            function removeSectionPossibles( possibles, index ) {
+                var sectionCoordinates = getSectionCoordinates( index );
+
+                for ( var j = 0; j < rows/sectionrows; ++j ) {
+                    for ( var i = 0; i < cols/sectioncols; ++i ) {
+                        var cellValue = thegame[ sectionCoordinates[0]*cols/sectioncols + sectionCoordinates[1]*rows*sectionrows + j*rows + i];
+                        removeCellValueFromPossible( cellValue, possibles );
+                    }
+                }
+            }
+
+            function removeRowPossibles( possibles, index ) {
+                var rownumber = Math.floor( index / rows );
+                for ( var i = rownumber*rows; i < (rownumber+1)*rows; ++i ) {
+                    removeCellValueFromPossible( thegame[i], possibles );
+                }
+            }
+
+            function removeColumnPossibles( possibles, index ) {
+                var columnNo = index - (rows*(Math.floor(index/cols)));
+
+                for ( var i = 0; i < rows*cols; ++i ) {
+                    if ( columnNo == i - (rows*(Math.floor(i/cols))) ) {
+                        removeCellValueFromPossible( thegame[i], possibles );
+                    }
+                }
+            }
+
+            function chooseExclusiveSectionPossible( index ) {
+                for (var numtofind = 1; numtofind < cols+1; ++numtofind ) {
+                    var foundIt = [];
+
+                    var sectionCoordinates = getSectionCoordinates( index );
+
+                    for ( var j = 0; j < rows/sectionrows; ++j ) {
+                        for ( var i = 0; i < cols/sectioncols; ++i ) {
+                            lookingAt = sectionCoordinates[0]*cols/sectioncols + sectionCoordinates[1]*rows*sectionrows + j*rows + i;
+                            if ( thegame[lookingAt].possibles.indexOf(numtofind) >= 0) {
+                                foundIt.push(thegame[lookingAt]);
+                            }
+                        }
+                    }
+
+                    if ( foundIt.length == 1 ) {
+                        // If we found a number that has to be in one specific cell in a row, return it
+                        foundIt[0].possibles = [];
+                        foundIt[0].possibles.push( numtofind );
+                        updateDialog( "Section " + index + " could only have " + numtofind + " in a single position" ); 
+
+                        return foundIt[0]; 
+                    }
+                }
+
+                return null;
+            }
+
+            function chooseExclusiveRowPossible( index ) {
+                for (var numtofind = 1; numtofind < cols+1; ++numtofind ) {
+                    var foundIt = [];
+
+                    for ( var j = index*cols; j < index*cols+cols; ++j ) {
+                        if ( thegame[j].possibles.indexOf(numtofind) >= 0) {
+                            foundIt.push(thegame[j]);
+                        }
+                    }
+
+                    if ( foundIt.length == 1 ) {
+                        // If we found a number that has to be in one specific cell in a row, return it
+                        foundIt[0].possibles = [];
+                        foundIt[0].possibles.push( numtofind );
+                        updateDialog( "Row " + index + " could only have " + numtofind + " in a single position" ); 
+
+                        return foundIt[0]; 
+                    }
+                }
+
+                return null;
+            }
+
+            function chooseExclusiveColumnPossible( index ) {
+                for (var numtofind = 1; numtofind < rows+1; ++numtofind ) {
+                    var foundIt = [];
+
+                    for ( var j = 0; j < rows*cols; j+=cols ) {
+                        if ( thegame[j].possibles.indexOf(numtofind) >= 0) {
+                            foundIt.push(thegame[j]);
+                        }
+                    }
+
+                    if ( foundIt.length == 1 ) {
+                        // If we found a number that has to be in one specific cell in a row, return it
+                        foundIt[0].possibles = [];
+                        foundIt[0].possibles.push( numtofind );
+                        updateDialog( "Column " + index + " could only have " + numtofind + " in a single position" ); 
+
+                        return foundIt[0]; 
+                    }
+                }
+
+                return null;
+            }
+
+            function calculatePossibles( index ) {
+                var possibles = [];
+                
+                if ( thegame[index].value == 0 ) {
+                    for ( var i = 0; i < rows; ++i ) {
+                        possibles.push(i+1);
+                    }
+                    
+                    removeSectionPossibles( possibles, index );
+                    removeRowPossibles( possibles, index );
+                    removeColumnPossibles( possibles, index );
+                }
+                thegame[index].possibles = possibles;
+            }
+
+            function chooseValue( chosen, userEntered ) {
+                var errorOccurred = false;
+                decisionStack.push( chosen );
+
+                if ( chosen.possibles.length > 1 ) { 
+                    chosen.guessed = true; 
+                    updateDialog( "Educated guess!" );
+                } else { 
+                    chosen.guessed = false; 
+                }
+
+                // If there is more than one option, pick a random one so that it can be picked differently if we guess wrong
+                var randomValue = Math.abs( Math.floor( Math.random() * chosen.possibles.length ) );
+                chosen.value = chosen.possibles[randomValue];
+                if ( userEntered ) { chosen.userEntered = true; }
+                chosen.possibles = [];
+
+                for ( var i = 0; i < cols*rows; ++i ) {
+                    calculatePossibles( i );
+                }
+
+                return errorOccurred;
+            }
+
+            function chooseMustHavesInAScope( userEntered ) {
+                // Check each possible value
+                var chosen = null;
+                for ( var i = 0; i < rows; ++i ) {
+                    chosen = chooseExclusiveRowPossible( i );
+                    if ( chosen == null ) { chosen = chooseExclusiveColumnPossible( i ); }
+                    if ( chosen == null ) { chosen = chooseExclusiveSectionPossible( i ); }
+
+                    if ( chosen != null ) {
+                        chooseValue( chosen, userEntered );
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            function nextStep( userEntered ) {
+                // Calculate all of the possible values in all of the cells
+                var randomIndex = Math.abs( Math.floor( Math.random() * rows * cols) );
+                calculatePossibles(randomIndex);
+                var leastPossibles = thegame[ randomIndex ];
+                var errorOccurred = false;
+                for ( var i = 0; i < cols*rows; ++i ) {
+                    calculatePossibles( i );
+
+                    if ( thegame[i].possibles.length == 0 && thegame[i].value == 0 ) {
+                        errorOccurred = true;
+                    }
+
+                    if ( leastPossibles.possibles.length == 0 || ( leastPossibles.possibles.length > thegame[i].possibles.length && thegame[i].possibles.length > 0 )  ) {
+                        leastPossibles = thegame[i];
+                    }
+                }
+
+                // Pick the cell with the least options (greater than 0) and give it a value
+                if ( !errorOccurred && leastPossibles.possibles.length == 1 ) {
+                    errorOccurred = chooseValue( leastPossibles, userEntered );
+                }
+                else {
+                    // There wasn't an exact match.  Before we guess, see if any of the rows, columns or sections need a number that can only live in one cell
+                    if ( !chooseMustHavesInAScope( userEntered ) ) {
+                        // There wasn't a box that had to be chosen because of the row/column/section values.  Make the best guess.
+                        if ( !errorOccurred && leastPossibles.possibles.length > 0 ) {
+                            
+                            errorOccurred = chooseValue( leastPossibles, userEntered );
+                        }
+                        else {
+                            if ( leastPossibles.value == 0 ) {
+                                updateDialog( "Failed to solve the puzzle" );
+                                return -999;
+                            }
+                            else{
+                                updateDialog( "Solved the puzzle" );
+                                return(123);
+                            }    
+                        }
+                    }
+                }
+                
+                return errorOccurred ? -999 : 1;
+            }
+
+            function sleep(ms) {
+                return new Promise(resolve => setTimeout(resolve, ms));
+            }
+
+
+            async function buildAPuzzle() {
+                var docontinue = true;
+                while ( docontinue ) {
+                    var returncode = nextStep(false);
+
+                    render();
+                    await new Promise(r => setTimeout(r, 70));
+
+                    if ( returncode == -999 ) {
+                        var breakit = false;
+                        while ( !breakit ) {
+                            var popped = undo();
+                            if ( popped == null || popped.guessed )  {
+                                breakit = true;
+                            }
+                        }
+
+                    } else if ( returncode == 123 ) {
+                        docontinue = false;
+                        updateDialog( "Puzzle created - click 'Make a Game' to take away the answers!");
+                    }
+
+                }
+
+            }
+
+            function clearBoard() {
+                thegame = [];
+                decisionStack = [];
+
+                var theSelect = document.getElementById('sudokurows');
+                if ( theSelect != null ) {
+                    var numberOfRows = theSelect.value;
+                    cols = parseInt( numberOfRows );
+                    rows = parseInt( numberOfRows );
+                    sectioncols = Math.sqrt(cols);
+                    sectionrows = Math.sqrt(rows);
+                }
+
+                for ( var i = 0; i < (rows*cols); ++i )
+                {
+                    thegame.push({
+                        value : 0, possibles : [0,0,0], userEntered : false, guessed : false
+                    });
+                }
+            }
+
+            function randomlyDeleteShit() {
+                for ( var i = 0; i < thegame.length; ++i ) {
+                    if ( Math.random() > sparseness ) {
+                        thegame[i].value = 0;
+                        thegame[i].possibles = [0,0,0];
+                        thegame[i].guessed = false;
+                    }
+                }
+                decisionStack = [];
+                updateDialog( "Click 'Next Step' to fill in an answer!" );
+            }
+
+            function setSparseness() {
+                var sparseText = document.getElementById('sparsenesslist').value;
+                sparseness = parseFloat(sparseText);
+            }
+
+            function undo() {
+                var decision = decisionStack.pop();
+                if ( decision != null ) {
+                    decision.value=0;
+                    decision.possibles = [0,0,0];
+                    decision.guessed = false;
+                }
+                for ( var i = 0; i < cols*rows; ++i ) {
+                    calculatePossibles( i );
+                }
+                render();
+                return decision;
+            }
+            
+            clearBoard();
+        </script>
+    </head>
+
+    <body onpageshow="render()">
+        <div class='container'>
+            <div id='gameboard' class='outside'>
+                <div></div>
+            </div>
+            <BR><BR>
+            <select id='sudokurows' onchange="clearBoard();">
+                <option value="4">2x2</option>
+                <option value="9" selected>3x3</option>
+                <option value="16">4x4</option>
+                <option value="25">5x5</option>
+            </select>
+            <button id='nextstep' onclick="clearBoard();render();">Clear</button>
+            <button id='nextstep' onclick="clearBoard();buildAPuzzle();render();">Make a puzzle</button>
+            <select id='sparsenesslist' onchange="setSparseness();">
+                <option value="0.7">Easy</option>
+                <option value="0.5" selected>Medium</option>
+                <option value="0.4">Hard</option>
+                <option value="0.2">Fuck Off</option>
+            </select>
+            <button id='nextstep' onclick="randomlyDeleteShit(); render();">Make a game</button>
+            <button id='nextstep' onclick="nextStep( true ); render();">Next Step</button>
+            <button id='nextstep' onclick="undo(); render();">Undo</button>
+            <div id='dialog' class='dialog'>Click 'Make a Puzzle' to get started!</div>
+            
+        </div>
+    </body>
+</HTML>
